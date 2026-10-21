@@ -1,0 +1,499 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#ffffff">
+<title>스레드 게시 관리</title>
+<!--
+  휴대폰용 스레드 대기열 관리 화면.
+  GitHub 비공개 저장소 bon3724-prog/threads-queue 의 queue/*.md 를 GitHub API로 직접 읽고 고친다.
+  상태·파일 형식은 threads/app.pyw · threads.py 와 같다 (draft/approved/scheduled/posted/failed).
+  실제 게시는 PC 실행기(pc_run.py) 또는 GitHub Actions(run-due.yml)가 한다. 이 페이지에는 Threads 토큰이 없다.
+  GitHub 토큰은 이 휴대폰 브라우저(localStorage)에만 저장된다.
+-->
+<style>
+:root{
+  --bg:#ffffff; --surface:#f6f7f9; --line:#e3e6ea; --text:#1d2228; --sub:#5f6b76; --accent:#1a56db; --accent-weak:#e8effc;
+  --draft:#6b7280; --approved:#0f8a5f; --scheduled:#1a56db; --posted:#7c8794; --failed:#d1342f;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;-webkit-text-size-adjust:100%}
+button,input,select,textarea{font:inherit;color:inherit}
+header{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line);padding:calc(10px + env(safe-area-inset-top)) 16px 10px;display:flex;align-items:center;gap:8px}
+header h1{font-size:18px;margin:0;flex:1}
+.icon-btn{border:1px solid var(--line);background:var(--bg);border-radius:10px;padding:6px 12px;font-size:14px}
+main{padding:12px 16px 120px;max-width:720px;margin:0 auto}
+.runner{font-size:13px;color:var(--sub);margin:0 0 10px}
+.runner b{color:var(--text)}
+.chips{display:flex;gap:6px;overflow-x:auto;padding-bottom:6px;margin:0 -16px 8px;padding-left:16px;padding-right:16px;scrollbar-width:none}
+.chip{flex:none;border:1px solid var(--line);background:var(--bg);border-radius:999px;padding:6px 12px;font-size:14px;white-space:nowrap}
+.chip[aria-pressed=true]{background:var(--text);border-color:var(--text);color:#fff}
+.card{display:block;width:100%;text-align:left;border:1px solid var(--line);background:var(--bg);border-radius:14px;padding:12px 14px;margin:0 0 10px}
+.card:active{background:var(--surface)}
+.card .top{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+.card .name{font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.card .pre{color:var(--sub);font-size:14px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.card .meta{font-size:12px;color:var(--sub);margin-top:6px}
+.badge{flex:none;font-size:12px;font-weight:600;border-radius:6px;padding:2px 8px;color:#fff}
+.s-draft{background:var(--draft)} .s-approved{background:var(--approved)} .s-scheduled{background:var(--scheduled)}
+.s-posted{background:var(--posted)} .s-failed{background:var(--failed)}
+.over{color:var(--failed);font-weight:600}
+.empty{color:var(--sub);text-align:center;padding:40px 0}
+/* 상세 */
+#detail{position:fixed;inset:0;z-index:10;background:var(--bg);overflow-y:auto;display:none}
+#detail.open{display:block}
+#detail .bar{position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--line);padding:calc(10px + env(safe-area-inset-top)) 16px 10px;display:flex;align-items:center;gap:8px;z-index:2}
+#detail .bar .t{flex:1;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wrap{padding:14px 16px calc(40px + env(safe-area-inset-bottom));max-width:720px;margin:0 auto}
+.info{background:var(--surface);border-radius:12px;padding:10px 12px;font-size:14px;margin-bottom:14px}
+.info p{margin:2px 0}
+.info .err{color:var(--failed)}
+label{display:block;font-size:13px;font-weight:600;color:var(--sub);margin:14px 0 6px}
+input[type=text],input[type=url],input[type=password],input[type=date],select,textarea{width:100%;border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--bg);font-size:16px}
+textarea{min-height:220px;resize:vertical;line-height:1.55}
+input:disabled,textarea:disabled,select:disabled{background:var(--surface);color:var(--sub)}
+.count{font-size:13px;color:var(--sub);text-align:right;margin-top:4px}
+.row{display:flex;gap:8px}
+.row>*{flex:1}
+.btn{display:block;width:100%;border:1px solid var(--line);background:var(--bg);border-radius:12px;padding:12px;font-weight:600;margin-top:10px}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.danger{color:var(--failed);border-color:#f1c4c2}
+.btn:disabled{opacity:.45}
+.section{border-top:1px solid var(--line);margin-top:22px;padding-top:8px}
+.section h2{font-size:15px;margin:10px 0 0}
+.hint{font-size:13px;color:var(--sub);margin:6px 0 0}
+/* 모달 */
+#modal{position:fixed;inset:0;z-index:20;background:rgba(20,24,28,.45);display:none;align-items:flex-end;justify-content:center}
+#modal.open{display:flex}
+#modal .box{background:var(--bg);width:100%;max-width:720px;border-radius:18px 18px 0 0;padding:18px 16px calc(18px + env(safe-area-inset-bottom));max-height:88vh;overflow-y:auto}
+#modal h3{margin:0 0 8px;font-size:17px}
+#modal .msg{white-space:pre-wrap;font-size:15px}
+#modal .text{white-space:pre-wrap;background:var(--surface);border-radius:10px;padding:10px 12px;font-size:14px;margin-top:10px;word-break:break-all}
+#toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--text);color:#fff;border-radius:10px;padding:10px 16px;font-size:14px;z-index:30;display:none;max-width:calc(100% - 32px)}
+#setup ol{padding-left:20px;font-size:15px}
+#setup li{margin:6px 0}
+#setup code{background:var(--surface);border-radius:4px;padding:1px 5px;font-size:14px}
+a{color:var(--accent)}
+</style>
+</head>
+<body>
+<header>
+  <h1>스레드 게시 관리</h1>
+  <button class="icon-btn" id="b-refresh">새로고침</button>
+  <button class="icon-btn" id="b-settings">설정</button>
+</header>
+
+<main id="list-view" hidden>
+  <p class="runner" id="runner">게시 실행기 확인 중…</p>
+  <div class="chips" id="chips"></div>
+  <div id="cards"></div>
+</main>
+
+<main id="setup" hidden>
+  <h2 style="font-size:18px">처음 한 번: GitHub 토큰 연결</h2>
+  <p class="hint">이 화면은 GitHub의 대기열(<code>threads-queue</code>)을 직접 고쳐요. 그러려면 그 저장소에만 쓸 수 있는 토큰이 필요해요. 토큰은 이 휴대폰 브라우저에만 저장돼요.</p>
+  <ol>
+    <li><a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">GitHub 새 토큰 만들기</a>를 눌러요 (Fine-grained token)</li>
+    <li>Token name: <code>threads-mobile</code>, Expiration: 원하는 기간</li>
+    <li>Repository access: <b>Only select repositories</b> → <code>threads-queue</code></li>
+    <li>Permissions → Repository permissions:
+      <br>· <b>Contents</b>: Read and write (필수)
+      <br>· <b>Actions</b>: Read and write (지금 바로 올리기용)
+      <br>· <b>Variables</b>: Read-only (PC 켜짐 표시용)</li>
+    <li>Generate token → 나온 토큰(<code>github_pat_…</code>)을 복사해 아래에 붙여넣어요</li>
+  </ol>
+  <label for="tok">GitHub 토큰</label>
+  <input type="password" id="tok" autocomplete="off" placeholder="github_pat_...">
+  <button class="btn primary" id="b-save-tok">연결하기</button>
+  <button class="btn danger" id="b-forget" hidden>이 휴대폰에서 토큰 지우기</button>
+</main>
+
+<section id="detail" aria-modal="true">
+  <div class="bar">
+    <button class="icon-btn" id="b-back">← 목록</button>
+    <span class="t" id="d-title"></span>
+    <span class="badge" id="d-badge"></span>
+  </div>
+  <div class="wrap">
+    <div class="info" id="d-info"></div>
+
+    <label for="d-account">올릴 계정</label>
+    <input type="text" id="d-account" list="accounts" autocomplete="off" autocapitalize="off">
+    <datalist id="accounts"></datalist>
+
+    <label for="d-body">본문</label>
+    <textarea id="d-body"></textarea>
+
+    <label for="d-link">블로그 링크 (본문 아래 붙어요)</label>
+    <input type="url" id="d-link" autocomplete="off" placeholder="https://blog.naver.com/...">
+    <div class="count" id="d-count"></div>
+
+    <label for="d-img">이미지 URL (선택, 공개 주소만)</label>
+    <input type="url" id="d-img" autocomplete="off">
+
+    <div id="d-actions"></div>
+  </div>
+</section>
+
+<div id="modal" role="dialog" aria-modal="true">
+  <div class="box">
+    <h3 id="m-title"></h3>
+    <div class="msg" id="m-msg"></div>
+    <div class="text" id="m-text" hidden></div>
+    <div class="row">
+      <button class="btn" id="m-no">취소</button>
+      <button class="btn primary" id="m-yes">확인</button>
+    </div>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script>
+const OWNER = "bon3724-prog", REPO = "threads-queue", BRANCH = "main";
+const LIMIT = 500;                                   // threads.py LIMIT (링크 포함)
+const STEP_MIN = 30;                                 // 앱과 같은 30분 단위 예약
+const STATUS_KO = {draft:"초안", approved:"승인됨", scheduled:"예약됨", posted:"게시됨", failed:"실패"};
+const EDITABLE = ["draft", "approved", "failed"];
+const FILTERS = [["active","진행 중"],["scheduled","예약됨"],["approved","승인됨"],["draft","초안"],["failed","실패"],["posted","게시됨"]];
+
+const $ = id => document.getElementById(id);
+const store = {
+  get(k){ try { return localStorage.getItem(k) || ""; } catch { return ""; } },
+  set(k, v){ try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch {} },
+};
+let token = store.get("tq_token");
+let items = [];          // {name, sha, meta: Map, body}
+let filter = store.get("tq_filter") || "active";
+let cur = null;          // 열린 글
+let dirty = false;
+let busy = false;
+
+// ---------- GitHub API ----------
+async function gh(path, opts = {}) {
+  const r = await fetch("https://api.github.com" + path, {
+    ...opts,
+    headers: {Authorization: "Bearer " + token, Accept: "application/vnd.github+json",
+              "X-GitHub-Api-Version": "2022-11-28", ...(opts.body ? {"Content-Type": "application/json"} : {})},
+  });
+  if (!r.ok) {
+    let msg = ""; try { msg = (await r.json()).message || ""; } catch {}
+    const e = new Error(msg || r.statusText); e.status = r.status; throw e;
+  }
+  return r.status === 204 ? null : r.json();
+}
+
+async function loadQueue() {
+  // 파일 66개를 한 번에 받으려고 GraphQL 사용 (파일마다 요청하지 않음)
+  const q = `query{repository(owner:"${OWNER}",name:"${REPO}"){object(expression:"${BRANCH}:queue"){... on Tree{entries{name oid object{... on Blob{text}}}}}}}`;
+  const res = await gh("/graphql", {method: "POST", body: JSON.stringify({query: q})});
+  if (res.errors) throw new Error(res.errors[0].message);
+  const entries = res.data.repository?.object?.entries || [];
+  items = entries.filter(e => e.name.endsWith(".md") && e.object?.text != null)
+    .map(e => ({name: e.name, sha: e.oid, ...parse(e.object.text)}))
+    .filter(x => x.meta);
+  items.sort((a, b) => a.name < b.name ? 1 : -1);    // 최근 글 먼저
+}
+
+function b64(s) {
+  const bytes = new TextEncoder().encode(s); let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
+async function putItem(it, message) {
+  const res = await gh(`/repos/${OWNER}/${REPO}/contents/queue/${encodeURIComponent(it.name)}`, {
+    method: "PUT", body: JSON.stringify({message, branch: BRANCH, sha: it.sha, content: b64(serialize(it))}),
+  });
+  it.sha = res.content.sha;
+}
+
+async function deleteItem(it) {
+  await gh(`/repos/${OWNER}/${REPO}/contents/queue/${encodeURIComponent(it.name)}`, {
+    method: "DELETE", body: JSON.stringify({message: `휴대폰: 실패 글 삭제 ${it.name}`, branch: BRANCH, sha: it.sha}),
+  });
+}
+
+// ---------- 대기열 파일 (threads.py read_item / write_item 과 같은 형식) ----------
+function parse(raw) {
+  raw = raw.replace(/\r\n/g, "\n");                   // PC 앱이 쓴 파일은 CRLF — 파이썬 read_text 처럼 맞춘다
+  if (!raw.startsWith("---")) return {meta: null};
+  const parts = raw.split("---");
+  const head = parts[1], body = parts.slice(2).join("---");
+  const meta = new Map();
+  for (const line of head.trim().split(/\r?\n/)) {
+    const i = line.indexOf(":");
+    if (i >= 0) meta.set(line.slice(0, i).trim(), line.slice(i + 1).trim());
+  }
+  return {meta, body: body.trim()};
+}
+function serialize(it) {
+  const head = [...it.meta].map(([k, v]) => `${k}: ${v}`).join("\n");
+  return `---\n${head}\n---\n${it.body}\n`;
+}
+function finalText(link, body) { return link ? `${body}\n\n${link}` : body; }
+const len = s => [...s].length;                       // 파이썬 len 과 같게 코드포인트 수
+const status = it => it.meta.get("status") || "?";
+function title(it) {
+  return it.name.replace(/\.md$/, "").replace(/^\d{8}_/, "").replace(/_[A-Za-z0-9_.]+$/, "") || it.name;
+}
+
+// ---------- 시간 ----------
+const pad = n => String(n).padStart(2, "0");
+const fmt = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+function parseTime(s) {
+  const m = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})$/.exec((s || "").trim());
+  return m ? new Date(+m[1], m[2] - 1, +m[3], +m[4], +m[5]) : null;
+}
+function nextSlot(lead = 10) {
+  const t = new Date(); t.setSeconds(0, 0); t.setMinutes(t.getMinutes() + lead);
+  t.setMinutes(t.getMinutes() + ((STEP_MIN - t.getMinutes() % STEP_MIN) % STEP_MIN));
+  return t;
+}
+const WEEK = "일월화수목금토";
+function niceTime(s) {
+  const d = parseTime(s); if (!d) return s;
+  return `${d.getMonth() + 1}/${d.getDate()}(${WEEK[d.getDay()]}) ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// ---------- 화면 ----------
+function toast(msg, ms = 2600) {
+  const t = $("toast"); t.textContent = msg; t.style.display = "block";
+  clearTimeout(toast.h); toast.h = setTimeout(() => t.style.display = "none", ms);
+}
+function ask(titleText, msg, text = "", yes = "확인") {
+  return new Promise(res => {
+    $("m-title").textContent = titleText; $("m-msg").textContent = msg;
+    $("m-text").hidden = !text; $("m-text").textContent = text; $("m-yes").textContent = yes;
+    $("modal").classList.add("open");
+    const done = v => { $("modal").classList.remove("open"); $("m-yes").onclick = $("m-no").onclick = null; res(v); };
+    $("m-yes").onclick = () => done(true); $("m-no").onclick = () => done(false);
+  });
+}
+function el(tag, attrs = {}, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) k === "class" ? e.className = v : k.startsWith("on") ? e[k] = v : e.setAttribute(k, v);
+  for (const k of kids) if (k != null) e.append(k);
+  return e;
+}
+const badge = st => el("span", {class: "badge s-" + st}, STATUS_KO[st] || st);
+
+function showSetup() {
+  $("list-view").hidden = true; $("setup").hidden = false;
+  $("b-forget").hidden = !token; $("tok").value = "";
+}
+
+function renderList() {
+  $("setup").hidden = true; $("list-view").hidden = false;
+  const count = k => k === "active" ? items.filter(i => status(i) !== "posted").length : items.filter(i => status(i) === k).length;
+  const chips = $("chips"); chips.textContent = "";
+  for (const [k, label] of FILTERS) {
+    chips.append(el("button", {class: "chip", "aria-pressed": String(filter === k), onclick: () => { filter = k; store.set("tq_filter", k); renderList(); }},
+      `${label} ${count(k)}`));
+  }
+  let rows = filter === "active" ? items.filter(i => status(i) !== "posted") : items.filter(i => status(i) === filter);
+  const rank = {failed: 0, scheduled: 1, approved: 2, draft: 3, posted: 4};
+  if (filter === "active" || filter === "scheduled") {
+    rows = [...rows].sort((a, b) => (rank[status(a)] ?? 5) - (rank[status(b)] ?? 5)
+      || (status(a) === "scheduled" ? (a.meta.get("scheduled_at") || "").localeCompare(b.meta.get("scheduled_at") || "") : 0));
+  }
+  const cards = $("cards"); cards.textContent = "";
+  if (!rows.length) { cards.append(el("p", {class: "empty"}, "이 상태인 글이 없어요")); return; }
+  for (const it of rows) {
+    const st = status(it), n = len(finalText(it.meta.get("link") || "", it.body));
+    const bits = [`@${it.meta.get("account") || "계정 미정"}`];
+    if (st === "scheduled") bits.unshift("예약 " + niceTime(it.meta.get("scheduled_at")));
+    if (st === "posted") bits.unshift("게시 " + niceTime(it.meta.get("posted_at") || ""));
+    const meta = el("div", {class: "meta"}, bits.join(" · ") + " · ");
+    meta.append(el("span", n > LIMIT ? {class: "over"} : {}, `${n}자`));
+    if (!it.meta.get("link")) meta.append(" · 링크 없음");
+    cards.append(el("button", {class: "card", onclick: () => openItem(it)},
+      el("div", {class: "top"}, el("span", {class: "name"}, title(it)), badge(st)),
+      el("div", {class: "pre"}, it.body.split("\n")[0]),
+      meta));
+  }
+}
+
+async function loadRunner() {
+  try {
+    const v = await gh(`/repos/${OWNER}/${REPO}/actions/variables/PC_HEARTBEAT`);
+    const ago = Math.round((Date.now() / 1000 - Number(v.value)) / 60);
+    $("runner").textContent = "";
+    if (ago < 25) $("runner").append("게시 실행기: ", el("b", {}, "PC 켜짐"), ` (${ago}분 전 신호) — 예약 시간 후 10분 안에 올라가요`);
+    else $("runner").append("게시 실행기: ", el("b", {}, "PC 꺼짐"), " — GitHub이 올려요 (늦어질 수 있어요)");
+  } catch {
+    $("runner").textContent = "게시 실행기 상태를 못 읽었어요 (토큰에 Variables 읽기 권한이 없으면 안 보여요)";
+  }
+}
+
+async function reload(quiet) {
+  if (!token) return showSetup();
+  try {
+    if (!quiet) toast("불러오는 중…", 8000);
+    await loadQueue();
+    renderList(); loadRunner();
+    $("accounts").textContent = "";
+    for (const a of new Set(items.map(i => i.meta.get("account")).filter(Boolean))) $("accounts").append(el("option", {value: a}));
+    if (!quiet) toast(`${items.length}개 글을 불러왔어요`);
+  } catch (e) {
+    if (e.status === 401) { toast("토큰이 만료됐거나 틀려요. 다시 연결해 주세요", 5000); showSetup(); }
+    else toast("불러오지 못했어요: " + e.message, 5000);
+  }
+}
+
+// ---------- 상세 ----------
+function openItem(it) {
+  cur = it; dirty = false;
+  const st = status(it), editable = EDITABLE.includes(st);
+  $("d-title").textContent = title(it);
+  const b = $("d-badge"); b.className = "badge s-" + st; b.textContent = STATUS_KO[st] || st;
+
+  const info = $("d-info"); info.textContent = "";
+  info.append(el("p", {}, it.name));
+  if (st === "scheduled") info.append(el("p", {}, `예약: ${it.meta.get("scheduled_at")} 에 @${it.meta.get("account")} 로 게시 (고치려면 예약 취소)`));
+  if (st === "posted") {
+    info.append(el("p", {}, `게시: ${it.meta.get("posted_at") || ""}`));
+    if (it.meta.get("permalink")) info.append(el("p", {}, el("a", {href: it.meta.get("permalink"), target: "_blank", rel: "noopener"}, "스레드에서 보기")));
+  }
+  if (it.meta.get("error")) info.append(el("p", {class: "err"}, "실패 이유: " + it.meta.get("error")));
+
+  $("d-account").value = it.meta.get("account") || "";
+  $("d-body").value = it.body;
+  $("d-link").value = it.meta.get("link") || "";
+  $("d-img").value = it.meta.get("image_url") || "";
+  for (const id of ["d-account", "d-body", "d-link", "d-img"]) $(id).disabled = !editable;
+  updateCount();
+
+  const box = $("d-actions"); box.textContent = "";
+  if (editable) {
+    box.append(el("button", {class: "btn", onclick: () => act("save")}, "저장"));
+    const r = el("div", {class: "row"});
+    if (st !== "approved") r.append(el("button", {class: "btn", onclick: () => act("approve")}, "승인"));
+    if (st !== "draft") r.append(el("button", {class: "btn", onclick: () => act("draft")}, "초안으로 되돌리기"));
+    box.append(r);
+
+    const s = nextSlot();
+    const date = el("input", {type: "date", id: "d-date", value: `${s.getFullYear()}-${pad(s.getMonth() + 1)}-${pad(s.getDate())}`});
+    const time = el("select", {id: "d-time"});
+    for (let h = 0; h < 24; h++) for (let m = 0; m < 60; m += STEP_MIN) {
+      const v = `${pad(h)}:${pad(m)}`;
+      time.append(el("option", v === `${pad(s.getHours())}:${pad(s.getMinutes())}` ? {value: v, selected: ""} : {value: v}, v));
+    }
+    box.append(el("div", {class: "section"},
+      el("h2", {}, "예약해서 올리기"),
+      el("div", {class: "row"}, el("div", {}, el("label", {for: "d-date"}, "날짜"), date), el("div", {}, el("label", {for: "d-time"}, "시간"), time)),
+      el("button", {class: "btn primary", onclick: () => act("schedule")}, "예약하기"),
+      el("button", {class: "btn", onclick: () => act("now")}, "지금 바로 올리기"),
+      el("p", {class: "hint"}, "지금 바로 올리기: PC가 켜져 있으면 10분 안에, 꺼져 있으면 GitHub이 바로 실행해서 1~5분 안에 올라가요.")));
+    if (st === "failed") box.append(el("button", {class: "btn danger", onclick: () => act("delete")}, "이 실패 글 삭제"));
+  } else if (st === "scheduled") {
+    box.append(el("button", {class: "btn primary", onclick: () => act("cancel")}, "예약 취소 (승인 상태로)"));
+  }
+  $("detail").classList.add("open"); $("detail").scrollTop = 0;
+  autoGrow();
+}
+
+function formText() { return finalText($("d-link").value.trim(), $("d-body").value.trim()); }
+function updateCount() {
+  const n = len(formText());
+  $("d-count").textContent = `링크 포함 ${n} / ${LIMIT}자`;
+  $("d-count").className = "count" + (n > LIMIT ? " over" : "");
+}
+function autoGrow() { const t = $("d-body"); t.style.height = "auto"; t.style.height = Math.max(220, t.scrollHeight + 4) + "px"; }
+
+function applyForm(it) {
+  it.meta.set("account", $("d-account").value.trim());
+  it.meta.set("link", $("d-link").value.trim());
+  it.meta.set("image_url", $("d-img").value.trim());
+  it.body = $("d-body").value.trim();
+}
+
+async function readyCheck() {          // app.pyw ready_check 와 같은 확인
+  if (!$("d-account").value.trim()) { await ask("계정 미정", "어느 계정에 올릴지 먼저 적어 주세요.", "", "알겠어요"); return false; }
+  if (len(formText()) > LIMIT) { await ask("너무 길어요", `링크 포함 ${LIMIT}자 이내로 줄여 주세요.`, "", "알겠어요"); return false; }
+  if (!$("d-link").value.trim() && !await ask("링크 없음", "블로그 링크가 비어 있어요. 링크 없이 진행할까요?", "", "진행")) return false;
+  return true;
+}
+
+async function act(kind) {
+  if (busy || !cur) return;
+  const it = cur;
+  const backup = {meta: new Map(it.meta), body: it.body};
+  let msg, done;
+  if (["approve", "schedule", "now"].includes(kind) && !await readyCheck()) return;
+
+  if (kind === "save") { applyForm(it); msg = "저장"; done = "저장했어요"; }
+  else if (kind === "approve") { applyForm(it); it.meta.delete("error"); it.meta.set("status", "approved"); msg = "승인"; done = "승인했어요"; }
+  else if (kind === "draft") { applyForm(it); it.meta.delete("error"); it.meta.set("status", "draft"); msg = "초안으로"; done = "초안으로 바꿨어요"; }
+  else if (kind === "cancel") { it.meta.delete("error"); it.meta.set("status", "approved"); msg = "예약 취소"; done = "예약을 취소했어요 — 승인 상태로 돌아갔어요"; }
+  else if (kind === "schedule" || kind === "now") {
+    let when;
+    if (kind === "schedule") {
+      when = parseTime(`${$("d-date").value} ${$("d-time").value}`);
+      if (!when) { toast("날짜와 시간을 골라 주세요"); return; }
+      if (when <= new Date()) { toast("지금보다 뒤의 시간을 골라 주세요"); return; }
+    } else when = new Date();
+    const head = kind === "now" ? "지금 바로 올릴까요?" : `${fmt(when)} 에 올릴까요?`;
+    if (!await ask(head, `@${$("d-account").value.trim()} 계정에 아래 내용이 올라가요.`, formText(), kind === "now" ? "올리기" : "예약하기")) return;
+    applyForm(it); it.meta.delete("error");
+    it.meta.set("status", "scheduled"); it.meta.set("scheduled_at", fmt(when));
+    msg = kind === "now" ? "바로 게시 예약" : `예약 ${fmt(when)}`;
+    done = kind === "now" ? "올리기 요청했어요" : `예약했어요: ${niceTime(fmt(when))}`;
+  } else if (kind === "delete") {
+    if (!await ask("실패 글 삭제", `이 글을 대기열에서 지울까요?\n되돌릴 수 없어요.\n\n${it.name}`, "", "삭제")) return;
+    busy = true;
+    try { await deleteItem(it); items = items.filter(x => x !== it); closeDetail(true); renderList(); toast("삭제했어요"); }
+    catch (e) { failed(e); } finally { busy = false; }
+    return;
+  }
+
+  busy = true;
+  try {
+    await putItem(it, `휴대폰: ${msg} ${it.name}`);
+    dirty = false;
+    if (kind === "now") {
+      try { await gh(`/repos/${OWNER}/${REPO}/actions/workflows/run-due.yml/dispatches`, {method: "POST", body: JSON.stringify({ref: BRANCH})}); }
+      catch { done += " (GitHub 즉시 실행은 못 했어요 — PC나 다음 정기 실행 때 올라가요)"; }
+    }
+    closeDetail(true); renderList(); toast(done, 4000);
+  } catch (e) {
+    it.meta = backup.meta; it.body = backup.body;
+    failed(e);
+  } finally { busy = false; }
+}
+
+function failed(e) {
+  if (e.status === 409 || e.status === 422) {
+    toast("그사이 다른 곳(PC·GitHub)에서 이 글이 바뀌었어요. 새로 불러올게요", 5000);
+    closeDetail(true); reload(true);
+  } else if (e.status === 403 || e.status === 404) toast("권한이 없어요. 토큰에 Contents 쓰기 권한이 있는지 확인해 주세요", 5000);
+  else toast("저장하지 못했어요: " + e.message, 5000);
+}
+
+async function closeDetail(force) {
+  if (!force && dirty && !await ask("저장 안 됨", "고친 내용을 저장하지 않고 나갈까요?", "", "나가기")) return;
+  $("detail").classList.remove("open"); cur = null; dirty = false;
+}
+
+// ---------- 연결 ----------
+for (const id of ["d-account", "d-body", "d-link", "d-img"]) $(id).addEventListener("input", () => { dirty = true; updateCount(); if (id === "d-body") autoGrow(); });
+$("b-back").onclick = () => closeDetail(false);
+$("b-refresh").onclick = () => reload(false);
+$("b-settings").onclick = () => $("setup").hidden ? showSetup() : (token ? renderList() : null);
+$("b-save-tok").onclick = async () => {
+  const v = $("tok").value.trim();
+  if (!v) return toast("토큰을 붙여넣어 주세요");
+  token = v;
+  try { await gh(`/repos/${OWNER}/${REPO}`); store.set("tq_token", v); toast("연결됐어요"); reload(false); }
+  catch (e) { token = store.get("tq_token"); toast(e.status === 404 || e.status === 401 ? "이 토큰으로 threads-queue 저장소를 못 열어요. 저장소 선택·권한을 확인해 주세요" : "연결 실패: " + e.message, 5000); }
+};
+$("b-forget").onclick = async () => {
+  if (!await ask("토큰 지우기", "이 휴대폰에 저장된 GitHub 토큰을 지울까요?", "", "지우기")) return;
+  store.set("tq_token", ""); token = ""; items = []; showSetup(); toast("지웠어요");
+};
+document.addEventListener("visibilitychange", () => { if (!document.hidden && token && !cur) reload(true); });
+reload(false);
+</script>
+</body>
+</html>
