@@ -126,7 +126,7 @@ a{color:var(--accent)}
     <label for="d-body">본문</label>
     <textarea id="d-body"></textarea>
 
-    <label for="d-link">블로그 링크 (본문 아래 붙어요)</label>
+    <label for="d-link">블로그 링크 (게시 후 댓글로 달려요)</label>
     <input type="url" id="d-link" autocomplete="off" placeholder="https://blog.naver.com/...">
     <div class="count" id="d-count"></div>
 
@@ -152,7 +152,7 @@ a{color:var(--accent)}
 
 <script>
 const OWNER = "bon3724-prog", REPO = "threads-queue", BRANCH = "main";
-const LIMIT = 500;                                   // threads.py LIMIT (링크 포함)
+const LIMIT = 500;                                   // threads.py LIMIT (본문 글자 수)
 const STEP_MIN = 30;                                 // 앱과 같은 30분 단위 예약
 const STATUS_KO = {draft:"초안", approved:"승인됨", scheduled:"예약됨", posted:"게시됨", failed:"실패", done:"완료"};
 const EDITABLE = ["draft", "approved", "failed", "done"];
@@ -232,7 +232,9 @@ function serialize(it) {
   const head = [...it.meta].map(([k, v]) => `${k}: ${v}`).join("\n");
   return `---\n${head}\n---\n${it.body}\n`;
 }
-function finalText(link, body) { return link ? `${body}\n\n${link}` : body; }
+// threads.py final_text 와 같게: 링크는 보통 댓글로 따로 달리고, link_in: body 인 글만 본문 아래 붙는다
+function finalText(link, body, linkIn) { return link && linkIn === "body" ? `${body}\n\n${link}` : body; }
+const replyText = (link, linkIn) => link && linkIn !== "body" ? `블로그에서 자세히 보기 👉 ${link}` : "";  // threads.py REPLY_FMT
 const len = s => [...s].length;                       // 파이썬 len 과 같게 코드포인트 수
 const status = it => it.meta.get("status") || "?";
 function title(it) {
@@ -301,7 +303,7 @@ function renderList() {
   const cards = $("cards"); cards.textContent = "";
   if (!rows.length) { cards.append(el("p", {class: "empty"}, "이 상태인 글이 없어요")); return; }
   for (const it of rows) {
-    const st = status(it), n = len(finalText(it.meta.get("link") || "", it.body));
+    const st = status(it), n = len(finalText(it.meta.get("link") || "", it.body, it.meta.get("link_in")));
     const bits = [`@${it.meta.get("account") || "계정 미정"}`];
     if (st === "scheduled") bits.unshift("예약 " + niceTime(it.meta.get("scheduled_at")));
     if (st === "posted") bits.unshift("게시 " + niceTime(it.meta.get("posted_at") || ""));
@@ -357,6 +359,7 @@ function openItem(it) {
     if (it.meta.get("permalink")) info.append(el("p", {}, el("a", {href: it.meta.get("permalink"), target: "_blank", rel: "noopener"}, "스레드에서 보기")));
   }
   if (it.meta.get("error")) info.append(el("p", {class: "err"}, "실패 이유: " + it.meta.get("error")));
+  if (it.meta.get("reply_error")) info.append(el("p", {class: "err"}, "링크 댓글 실패: " + it.meta.get("reply_error")));
 
   $("d-account").value = it.meta.get("account") || "";
   $("d-body").value = it.body;
@@ -394,10 +397,17 @@ function openItem(it) {
   autoGrow();
 }
 
-function formText() { return finalText($("d-link").value.trim(), $("d-body").value.trim()); }
+const formLinkIn = () => cur ? cur.meta.get("link_in") : undefined;
+function formText() { return finalText($("d-link").value.trim(), $("d-body").value.trim(), formLinkIn()); }
+function formPreview() {
+  const r = replyText($("d-link").value.trim(), formLinkIn());
+  return r ? `${formText()}
+
+[댓글] ${r}` : formText();
+}
 function updateCount() {
   const n = len(formText());
-  $("d-count").textContent = `링크 포함 ${n} / ${LIMIT}자`;
+  $("d-count").textContent = `본문 ${n} / ${LIMIT}자` + (formLinkIn() === "body" ? " (링크 포함)" : " (링크는 댓글로)");
   $("d-count").className = "count" + (n > LIMIT ? " over" : "");
 }
 function autoGrow() { const t = $("d-body"); t.style.height = "auto"; t.style.height = Math.max(220, t.scrollHeight + 4) + "px"; }
@@ -411,7 +421,7 @@ function applyForm(it) {
 
 async function readyCheck() {          // app.pyw ready_check 와 같은 확인
   if (!$("d-account").value.trim()) { await ask("계정 미정", "어느 계정에 올릴지 먼저 적어 주세요.", "", "알겠어요"); return false; }
-  if (len(formText()) > LIMIT) { await ask("너무 길어요", `링크 포함 ${LIMIT}자 이내로 줄여 주세요.`, "", "알겠어요"); return false; }
+  if (len(formText()) > LIMIT) { await ask("너무 길어요", `본문을 ${LIMIT}자 이내로 줄여 주세요.`, "", "알겠어요"); return false; }
   if (!$("d-link").value.trim() && !await ask("링크 없음", "블로그 링크가 비어 있어요. 링크 없이 진행할까요?", "", "진행")) return false;
   return true;
 }
@@ -435,7 +445,7 @@ async function act(kind) {
       if (when <= new Date()) { toast("지금보다 뒤의 시간을 골라 주세요"); return; }
     } else when = new Date();
     const head = kind === "now" ? "지금 바로 올릴까요?" : `${fmt(when)} 에 올릴까요?`;
-    if (!await ask(head, `@${$("d-account").value.trim()} 계정에 아래 내용이 올라가요.`, formText(), kind === "now" ? "올리기" : "예약하기")) return;
+    if (!await ask(head, `@${$("d-account").value.trim()} 계정에 아래 내용이 올라가요.`, formPreview(), kind === "now" ? "올리기" : "예약하기")) return;
     applyForm(it); it.meta.delete("error");
     it.meta.set("status", "scheduled"); it.meta.set("scheduled_at", fmt(when));
     msg = kind === "now" ? "바로 게시 예약" : `예약 ${fmt(when)}`;
